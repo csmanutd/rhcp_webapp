@@ -1,17 +1,19 @@
-// 合并环境变量中的域名和开发环境域名
-const allowedOrigins = [
-    ...(process.env.ALLOWED_ORIGINS || '').split(',').filter(Boolean),
-    'http://localhost:8000',       // 本地开发环境
-    'http://localhost:8787',       // Wrangler 本地开发服务器
-    'http://127.0.0.1:8000',
-    'http://127.0.0.1:8787'
-];
+export default {
+    async fetch(request, env, ctx) {
+        return await handleRequest(request, env);
+    }
+};
   
-addEventListener('fetch', event => {
-    event.respondWith(handleRequest(event.request));
-});
-  
-async function handleRequest(request) {
+async function handleRequest(request, env) {
+    // 将 allowedOrigins 移到函数内部
+    const allowedOrigins = [
+        ...(env?.ALLOWED_ORIGINS || '').split(',').filter(Boolean),
+        'http://localhost:8000',       // 本地开发环境
+        'http://localhost:8787',       // Wrangler 本地开发服务器
+        'http://127.0.0.1:8000',
+        'http://127.0.0.1:8787'
+    ];
+
     const origin = request.headers.get('Origin');
 
     // 如果没有 Origin 头或来源不在允许列表中，返回 403
@@ -20,7 +22,7 @@ async function handleRequest(request) {
             status: 403,
             headers: {
                 'Content-Type': 'text/plain',
-                'Access-Control-Allow-Origin': origin || '*', // 确保返回 CORS 头
+                'Access-Control-Allow-Origin': origin || '*',
             }
         });
     }
