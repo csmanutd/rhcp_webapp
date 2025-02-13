@@ -1,0 +1,17 @@
+# Environment variables
+.env
+
+# IDE files
+.vscode/
+.idea/
+
+# System files
+.DS_Store
+Thumbs.db
+node_modules/
+*.csv
+*.json
+*_mac
+.wrangler/
+*.mov
+wrangler.toml

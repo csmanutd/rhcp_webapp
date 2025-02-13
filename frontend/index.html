@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rule Hit Count Report Plus</title>
+    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <style>
+        /* 基本页面样式 */
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f4f4f9;
+            color: #333;
+        }
+
+        /* 顶部标题样式 */
+        h1 {
+            text-align: center;
+            margin: 20px 0;
+            color: #4CAF50;
+        }
+
+        /* 表单容器样式 */
+        form {
+            max-width: 600px;
+            margin: 30px auto;
+            padding: 20px;
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        label {
+            font-weight: bold;
+            display: block;
+            margin: 15px 0 5px;
+        }
+
+        input[type="file"] {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 15px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            background: #f9f9f9;
+        }
+
+        button {
+            width: 100%;
+            padding: 10px;
+            border: none;
+            background: #4CAF50;
+            color: #fff;
+            font-size: 16px;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #45a049;
+        }
+
+        /* 下载按钮样式 */
+        #downloadLink {
+            display: none; /* 初始隐藏 */
+            margin: 20px auto;
+            padding: 10px 20px;
+            background: #4CAF50;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            font-weight: bold;
+            text-align: center;
+            max-width: 300px;
+        }
+
+        #downloadLink:hover {
+            background: #45a049;
+        }
+
+        /* 容器样式 */
+        .container {
+            padding: 10px 20px;
+        }
+
+        /* 可视化容器样式 */
+        #visualization {
+            width: 100%;
+            margin: 20px auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        /* 下载按钮容器 */
+        .download-container {
+            text-align: center;
+            margin: 20px 0;
+            padding: 10px;
+        }
+
+        /* 添加新的样式 */
+        .icon {
+            display: inline-block;
+            margin: 0 5px;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 12px;
+            background: #f0f0f0;
+            color: #666;
+        }
+        .extra-scope-icon {
+            background: #ffebee;
+            color: #c62828;
+        }
+        .all-workloads-icon {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+        .rule-row {
+            display: flex;
+        }
+
+        /* 新增标签样式 */
+        .extra-scope-label {
+            background: #ffebee;
+            color: #c62828;
+            font-weight: bold;
+        }
+        .all-workloads-label {
+            background: #e0f7fa;
+            color: #006064;
+            font-weight: bold;
+        }
+        .role-label {
+            background: #e3f2fd;
+            color: #1976d2;
+        }
+        .location-label {
+            background: #f3e5f5;
+            color: #7b1fa2;
+        }
+        .iplist-label {
+            background: #fff3e0;
+            color: #e65100;
+        }
+        .label {
+            display: inline-block;
+            margin: 2px;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        .label-group {
+            background: #fce4ec;
+            color: #c2185b;
+        }
+        .exclusion-label {
+            background: #ffcdd2;
+            color: #d32f2f;
+        }
+        .exclusion-group {
+            background: #f8bbd0;
+            color: #880e4f;
+        }
+
+        /* 添加版权信息样式 */
+        .footer {
+            text-align: center;
+            padding: 20px;
+            margin-top: 40px;
+            color: #666;
+            font-size: 14px;
+            border-top: 1px solid #eee;
+        }
+    </style>
+</head>
+<body>
+    <h1>Rule Hit Count Report Plus</h1>
+    <div class="container">
+        <form id="csvForm">
+            <label for="reportFile">Upload the Report CSV:</label>
+            <input type="file" id="reportFile" name="reportFile" accept=".csv" required>
+            
+            <label for="rulesFile">Upload the Rules Exported from the Workloader:</label>
+            <input type="file" id="rulesFile" name="rulesFile" accept=".csv" required>
+            
+            <button type="submit">Generate Merged File</button>
+        </form>
+
+        <div class="download-container">
+            <a id="downloadLink" href="#" style="display: none;">Download CSV</a>
+        </div>
+
+        <div id="visualization"></div>
+    </div>
+
+    <footer class="footer">
+        <p>© 2025 Shuai Chen for Illumio PCE</p>
+    </footer>
+
+    <script>
+        const form = document.getElementById('csvForm');
+        const downloadLink = document.getElementById('downloadLink');
+
+        const API_URL = window.location.hostname === 'localhost' 
+            ? 'http://localhost:8787'
+            : 'https://wandering.chenshuaicon.workers.dev';
+
+        // 添加 convertToCSV 函数
+        function convertToCSV(data) {
+            return data.map(row => 
+                row.map(cell => {
+                    // 处理包含逗号、引号或换行符的单元格
+                    if (cell && (cell.includes(',') || cell.includes('"') || cell.includes('\n'))) {
+                        return `"${cell.replace(/"/g, '""')}"`;
+                    }
+                    return cell || '';
+                }).join(',')
+            ).join('\n');
+        }
+
+        function createVisualization(visualData) {
+            const container = document.getElementById('visualization');
+            container.innerHTML = '';
+
+            const style = document.createElement('style');
+            style.textContent = `
+                .ruleset-container {
+                    margin: 20px 0;
+                    padding: 15px;
+                    border: 1px solid #e0e0e0;
+                    border-radius: 8px;
+                    background: #f8f9fa;
+                }
+                .ruleset-header {
+                    font-size: 18px;
+                    font-weight: bold;
+                    color: #4CAF50;
+                    margin-bottom: 10px;
+                    padding-bottom: 5px;
+                    border-bottom: 2px solid #4CAF50;
+                }
+                .rule-row {
+                    display: flex;
+                    align-items: center;
+                    justify-content: flex-start;
+                    margin: 10px 0;
+                    padding: 15px;
+                    background: white;
+                    border-radius: 4px;
+                    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+                    min-height: 60px;
+                    flex-wrap: wrap;
+                    gap: 10px;
+                }
+                .source-section, .destination-section {
+                    flex: 1;
+                    padding: 10px;
+                    display: flex;
+                    flex-wrap: wrap;
+                    align-items: center;
+                    min-height: 40px;
+                    max-width: 40%;
+                    gap: 4px;
+                }
+                .arrow-section {
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    justify-content: center;
+                    width: 160px;
+                    padding: 0 20px;
+                    flex-shrink: 0;
+                }
+                .hit-count {
+                    font-size: 14px;
+                    color: #666;
+                    margin-bottom: 8px;
+                    display: flex;
+                    align-items: center;
+                    gap: 4px;
+                }
+                .hit-count-number {
+                    font-weight: bold;
+                    color: #333;
+                    font-size: 16px;
+                }
+                .arrow {
+                    font-size: 24px;
+                    color: #4CAF50;
+                    font-weight: bold;
+                    position: relative;
+                    width: 100px;
+                    text-align: center;
+                }
+                .arrow::after {
+                    content: '→';
+                    display: inline-block;
+                    transform: scaleX(1.5);
+                }
+                .label {
+                    display: inline-block;
+                    margin: 2px 4px;
+                    padding: 4px 8px;
+                    border-radius: 4px;
+                    font-size: 12px;
+                    white-space: normal;
+                    word-break: break-word;
+                    line-height: 1.4;
+                    flex-shrink: 0;
+                }
+                .role-label {
+                    background: #e3f2fd;
+                    color: #1976d2;
+                }
+                .location-label {
+                    background: #f3e5f5;
+                    color: #7b1fa2;
+                }
+                .iplist-label {
+                    background: #fff3e0;
+                    color: #e65100;
+                }
+                .service-label {
+                    background: #e8f5e9;
+                    color: #2e7d32;
+                    margin-top: 5px;
+                }
+
+                /* 新增标签样式 */
+                .extra-scope-label {
+                    display: block;
+                    margin: 2px 15px;
+                    padding: 4px 8px;
+                    border-radius: 4px;
+                    font-size: 12px;
+                    background: #ffebee;
+                    color: #c62828;
+                    font-weight: bold;
+                }
+                .all-workloads-label {
+                    background: #e0f7fa;
+                    color: #006064;
+                    font-weight: bold;
+                }
+                .role-label {
+                    background: #e3f2fd;
+                    color: #1976d2;
+                }
+                .location-label {
+                    background: #f3e5f5;
+                    color: #7b1fa2;
+                }
+                .iplist-label {
+                    background: #fff3e0;
+                    color: #e65100;
+                }
+                .label {
+                    display: inline-block;
+                    margin: 2px;
+                    padding: 4px 8px;
+                    border-radius: 4px;
+                    font-size: 12px;
+                }
+                .label-group {
+                    background: #fce4ec;
+                    color: #c2185b;
+                }
+                .exclusion-label {
+                    background: #ffcdd2;
+                    color: #d32f2f;
+                    text-decoration: line-through;
+                }
+                .exclusion-group {
+                    background: #f8bbd0;
+                    color: #880e4f;
+                    text-decoration: line-through;
+                }
+
+                /* 确保标签容器内的对齐 */
+                .source-section .label:first-child,
+                .destination-section .label:first-child {
+                    margin-left: 0;
+                }
+
+                .source-section .label:last-child,
+                .destination-section .label:last-child {
+                    margin-right: 0;
+                }
+
+                /* Extra-Scope 标签的特殊处理 */
+                .extra-scope-label {
+                    margin-bottom: 5px;
+                    width: 100%;
+                }
+            `;
+            document.head.appendChild(style);
+
+            // 为每个 ruleset 创建容器
+            for (const [rulesetName, rulesetData] of Object.entries(visualData)) {
+                const rulesetContainer = document.createElement('div');
+                rulesetContainer.className = 'ruleset-container';
+
+                // Ruleset 标题
+                const rulesetHeader = document.createElement('div');
+                rulesetHeader.className = 'ruleset-header';
+                rulesetHeader.textContent = `${rulesetName} (Scope: ${rulesetData.scope || 'N/A'})`;
+                rulesetContainer.appendChild(rulesetHeader);
+
+                // 创建每条规则的行
+                rulesetData.rules.forEach(rule => {
+                    // 如果命中次数为0，跳过该规则
+                    if (rule.hitCount === '0') return;
+
+                    const ruleRow = document.createElement('div');
+                    ruleRow.className = 'rule-row';
+
+                    // Extra-Scope 标签
+                    if (rule.unscopedConsumers === true || rule.unscopedConsumers === 'true') {
+                        const extraScopeLabel = document.createElement('span');
+                        extraScopeLabel.className = 'label extra-scope-label';
+                        extraScopeLabel.textContent = 'Extra-Scope';
+                        ruleRow.appendChild(extraScopeLabel);
+                    }
+
+                    // 源部分
+                    const sourceSection = document.createElement('div');
+                    sourceSection.className = 'source-section';
+                    
+                    // All Workloads 标签（源）
+                    if (rule.srcAllWorkloads === true || rule.srcAllWorkloads === 'true') {
+                        const allWorkloadsLabel = document.createElement('span');
+                        allWorkloadsLabel.className = 'label all-workloads-label';
+                        allWorkloadsLabel.textContent = 'All Workloads';
+                        sourceSection.appendChild(allWorkloadsLabel);
+                    }
+
+                    // 源标签
+                    if (rule.srcLabels) {
+                        rule.srcLabels.split(';').forEach(label => {
+                            const labelSpan = document.createElement('span');
+                            labelSpan.className = `label ${label.startsWith('R:') ? 'role-label' : 'location-label'}`;
+                            labelSpan.textContent = label;
+                            sourceSection.appendChild(labelSpan);
+                        });
+                    }
+
+                    // 源排除标签
+                    if (rule.srcLabelsExclusions) {
+                        rule.srcLabelsExclusions.split(';').forEach(label => {
+                            const labelSpan = document.createElement('span');
+                            labelSpan.className = 'label exclusion-label';
+                            labelSpan.textContent = label;
+                            sourceSection.appendChild(labelSpan);
+                        });
+                    }
+
+                    // 源标签组
+                    if (rule.srcLabelGroups) {
+                        rule.srcLabelGroups.split(';').forEach(group => {
+                            const groupSpan = document.createElement('span');
+                            groupSpan.className = 'label label-group';
+                            groupSpan.textContent = `[${group}]`;
+                            sourceSection.appendChild(groupSpan);
+                        });
+                    }
+
+                    // 源排除标签组
+                    if (rule.srcLabelGroupsExclusions) {
+                        rule.srcLabelGroupsExclusions.split(';').forEach(group => {
+                            const groupSpan = document.createElement('span');
+                            groupSpan.className = 'label exclusion-group';
+                            groupSpan.textContent = `[${group}]`;
+                            sourceSection.appendChild(groupSpan);
+                        });
+                    }
+
+                    if (rule.srcIplists) {
+                        const iplistSpan = document.createElement('span');
+                        iplistSpan.className = 'label iplist-label';
+                        iplistSpan.textContent = rule.srcIplists;
+                        sourceSection.appendChild(iplistSpan);
+                    }
+
+                    // 箭头和命中次数部分
+                    const arrowSection = document.createElement('div');
+                    arrowSection.className = 'arrow-section';
+                    
+                    const hitCount = document.createElement('div');
+                    hitCount.className = 'hit-count';
+                    
+                    const hitText = document.createElement('span');
+                    hitText.textContent = 'Hits:';
+                    
+                    const hitNumber = document.createElement('span');
+                    hitNumber.className = 'hit-count-number';
+                    hitNumber.textContent = rule.hitCount;
+                    
+                    hitCount.appendChild(hitText);
+                    hitCount.appendChild(hitNumber);
+                    
+                    const arrow = document.createElement('div');
+                    arrow.className = 'arrow';
+                    
+                    arrowSection.appendChild(hitCount);
+                    arrowSection.appendChild(arrow);
+
+                    // 目标部分
+                    const destinationSection = document.createElement('div');
+                    destinationSection.className = 'destination-section';
+                    
+                    // All Workloads 标签（目标）
+                    if (rule.dstAllWorkloads === true || rule.dstAllWorkloads === 'true') {
+                        const allWorkloadsLabel = document.createElement('span');
+                        allWorkloadsLabel.className = 'label all-workloads-label';
+                        allWorkloadsLabel.textContent = 'All Workloads';
+                        destinationSection.appendChild(allWorkloadsLabel);
+                    }
+
+                    // 目标标签
+                    if (rule.dstLabels) {
+                        rule.dstLabels.split(';').forEach(label => {
+                            const labelSpan = document.createElement('span');
+                            labelSpan.className = `label ${label.startsWith('R:') ? 'role-label' : 'location-label'}`;
+                            labelSpan.textContent = label;
+                            destinationSection.appendChild(labelSpan);
+                        });
+                    }
+
+                    // 目标排除标签
+                    if (rule.dstLabelsExclusions) {
+                        rule.dstLabelsExclusions.split(';').forEach(label => {
+                            const labelSpan = document.createElement('span');
+                            labelSpan.className = 'label exclusion-label';
+                            labelSpan.textContent = label;
+                            destinationSection.appendChild(labelSpan);
+                        });
+                    }
+
+                    // 目标标签组
+                    if (rule.dstLabelGroups) {
+                        rule.dstLabelGroups.split(';').forEach(group => {
+                            const groupSpan = document.createElement('span');
+                            groupSpan.className = 'label label-group';
+                            groupSpan.textContent = `[${group}]`;
+                            destinationSection.appendChild(groupSpan);
+                        });
+                    }
+
+                    // 目标排除标签组
+                    if (rule.dstLabelGroupsExclusions) {
+                        rule.dstLabelGroupsExclusions.split(';').forEach(group => {
+                            const groupSpan = document.createElement('span');
+                            groupSpan.className = 'label exclusion-group';
+                            groupSpan.textContent = `[${group}]`;
+                            destinationSection.appendChild(groupSpan);
+                        });
+                    }
+
+                    if (rule.dstIplists) {
+                        const iplistSpan = document.createElement('span');
+                        iplistSpan.className = 'label iplist-label';
+                        iplistSpan.textContent = rule.dstIplists;
+                        destinationSection.appendChild(iplistSpan);
+                    }
+
+                    // 添加所有部分到规则行
+                    ruleRow.appendChild(sourceSection);
+                    ruleRow.appendChild(arrowSection);
+                    ruleRow.appendChild(destinationSection);
+                    rulesetContainer.appendChild(ruleRow);
+                });
+
+                container.appendChild(rulesetContainer);
+            }
+        }
+
+        form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+
+            try {
+                const formData = new FormData();
+                const reportFile = document.getElementById('reportFile').files[0];
+                const rulesFile = document.getElementById('rulesFile').files[0];
+
+                formData.append('report', reportFile);
+                formData.append('rules', rulesFile);
+
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    body: formData,
+                    credentials: 'omit'
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
+                }
+
+                const result = await response.json();
+                createVisualization(result.visualData);
+
+                // 更新下载链接
+                const blob = new Blob([convertToCSV(result.csvData)], { type: 'text/csv' });
+                const url = URL.createObjectURL(blob);
+                const reportFileName = reportFile.name.replace('.csv', '_plus.csv');
+                downloadLink.href = url;
+                downloadLink.download = reportFileName;
+                downloadLink.style.display = 'inline-block';
+                downloadLink.textContent = `Download ${reportFileName}`;
+            } catch (error) {
+                console.error('Error:', error);
+                alert(`Error: ${error.message}`);
+                downloadLink.style.display = 'none';
+            }
+        });
+    </script>
+</body>
+</html>
