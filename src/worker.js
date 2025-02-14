@@ -28,7 +28,7 @@ async function handleRequest(request, env) {
     }
 
     if (request.method === 'OPTIONS') {
-        return handleOptions(request);
+        return handleOptions(request, allowedOrigins);
     }
 
     try {
@@ -66,14 +66,14 @@ async function handleRequest(request, env) {
     }
 }
   
-async function handleOptions(request) {
+async function handleOptions(request, allowedOrigins) {
     const origin = request.headers.get('Origin');
     
     if (!origin || !allowedOrigins.includes(origin)) {
         return new Response('CORS Not Allowed', { 
             status: 403,
             headers: {
-                'Access-Control-Allow-Origin': origin || '*', // 确保返回 CORS 头
+                'Access-Control-Allow-Origin': origin || '*',
             }
         });
     }
