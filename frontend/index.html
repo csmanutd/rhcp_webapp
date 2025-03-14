@@ -175,6 +175,61 @@
             font-size: 14px;
             border-top: 1px solid #eee;
         }
+
+        /* 错误消息样式 */
+        .error-container {
+            display: none;
+            margin: 20px auto;
+            padding: 20px;
+            background-color: #ffebee;
+            border-left: 5px solid #d32f2f;
+            color: #b71c1c;
+            border-radius: 4px;
+            max-width: 600px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            animation: fadeIn 0.3s ease-in-out;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .error-title {
+            font-weight: bold;
+            margin-bottom: 15px;
+            font-size: 18px;
+            display: flex;
+            align-items: center;
+        }
+        
+        .error-title::before {
+            content: "⚠️";
+            margin-right: 10px;
+            font-size: 20px;
+        }
+        
+        .error-message {
+            margin-bottom: 15px;
+            line-height: 1.5;
+        }
+        
+        .error-help {
+            font-style: italic;
+            color: #555;
+            margin-top: 15px;
+            line-height: 1.5;
+        }
+        
+        .error-example {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 4px;
+            font-family: monospace;
+            margin: 15px 0;
+            overflow-x: auto;
+            border: 1px solid #ddd;
+        }
     </style>
 </head>
 <body>
@@ -189,6 +244,13 @@
             
             <button type="submit">Generate Merged File</button>
         </form>
+
+        <div id="errorContainer" class="error-container">
+            <div class="error-title">File Format Error</div>
+            <div id="errorMessage" class="error-message"></div>
+            <div id="errorHelp" class="error-help"></div>
+            <div id="errorExample" class="error-example"></div>
+        </div>
 
         <div class="download-container">
             <a id="downloadLink" href="#" style="display: none;">Download CSV</a>
@@ -208,6 +270,16 @@
         const API_URL = window.location.hostname === 'localhost' 
             ? 'http://localhost:8787'
             : 'https://wandering.chenshuaicon.workers.dev';
+
+        // 添加全局错误处理
+        window.addEventListener('error', function(event) {
+            console.error('Global error:', event.error);
+            const errorContainer = document.getElementById('errorContainer');
+            if (errorContainer && errorContainer.style.display !== 'block') {
+                showError('An unexpected error occurred. Please try again or contact support if the problem persists.');
+            }
+            return false; // 防止默认的错误处理
+        });
 
         // 添加 convertToCSV 函数
         function convertToCSV(data) {
@@ -578,8 +650,48 @@
             }
         }
 
+        // 添加显示错误的函数
+        function showError(error, details) {
+            const errorContainer = document.getElementById('errorContainer');
+            const errorMessage = document.getElementById('errorMessage');
+            const errorHelp = document.getElementById('errorHelp');
+            const errorExample = document.getElementById('errorExample');
+            
+            errorMessage.textContent = error;
+            errorContainer.style.display = 'block';
+            
+            // 清除之前的帮助内容
+            errorHelp.textContent = '';
+            errorExample.textContent = '';
+            
+            // 根据错误类型提供具体帮助
+            if (details && details.missingColumn) {
+                if (details.fileType === 'report') {
+                    errorHelp.innerHTML = 'Your report CSV file must contain a <strong>"Rule HREF"</strong> column. This column is essential for matching rules with their hit counts.<br><br>Please download a new report from PCE that includes this column, or add it manually to your CSV file.';
+                    errorExample.textContent = 'Example report CSV header:\nRuleset Name,Rule HREF,Rule Hit Count,...';
+                } else if (details.fileType === 'rules') {
+                    errorHelp.innerHTML = 'Your rules CSV file must contain a <strong>"rule_href"</strong> column. This column is essential for matching rules with their hit counts.<br><br>Please export rules from Workloader again and ensure this column is included.';
+                    errorExample.textContent = 'Example rules CSV header:\nruleset_name,rule_href,src_labels,dst_labels,...';
+                }
+            } else if (error.includes('Server returned non-JSON')) {
+                errorHelp.innerHTML = 'The server returned an unexpected response format. This might be due to server maintenance or temporary issues.<br><br>Please try again later or contact support if the problem persists.';
+            } else {
+                errorHelp.innerHTML = 'Please check both CSV files to ensure they have the correct format and contain all required columns.<br><br>If the problem persists, try downloading fresh copies of the reports from PCE and Workloader.';
+            }
+            
+            // 滚动到错误消息
+            errorContainer.scrollIntoView({ behavior: 'smooth' });
+        }
+        
+        // 添加隐藏错误的函数
+        function hideError() {
+            const errorContainer = document.getElementById('errorContainer');
+            errorContainer.style.display = 'none';
+        }
+
         form.addEventListener('submit', async (event) => {
             event.preventDefault();
+            hideError(); // 隐藏之前的错误
 
             try {
                 const formData = new FormData();
@@ -595,12 +707,25 @@
                     credentials: 'omit'
                 });
 
-                if (!response.ok) {
-                    const errorText = await response.text();
-                    throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
+                let result;
+                const contentType = response.headers.get('content-type');
+                if (contentType && contentType.includes('application/json')) {
+                    result = await response.json();
+                } else {
+                    // 处理非JSON响应
+                    const text = await response.text();
+                    throw new Error(`Server returned non-JSON response: ${text}`);
+                }
+                
+                if (!response.ok || (result && !result.success)) {
+                    // 处理API返回的错误
+                    const errorMessage = result && result.error ? result.error : `Error: HTTP status ${response.status}`;
+                    const details = result && result.details ? result.details : null;
+                    showError(errorMessage, details);
+                    downloadLink.style.display = 'none';
+                    return;
                 }
 
-                const result = await response.json();
                 createVisualization(result.visualData);
 
                 // 更新下载链接
@@ -613,10 +738,14 @@
                 downloadLink.textContent = `Download ${reportFileName}`;
             } catch (error) {
                 console.error('Error:', error);
-                alert(`Error: ${error.message}`);
+                showError(`Error: ${error.message}`);
                 downloadLink.style.display = 'none';
             }
         });
+
+        // 文件选择变化时隐藏错误
+        document.getElementById('reportFile').addEventListener('change', hideError);
+        document.getElementById('rulesFile').addEventListener('change', hideError);
     </script>
 </body>
 </html>

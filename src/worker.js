@@ -51,9 +51,26 @@ async function handleRequest(request, env) {
   
             // 合并 CSV 数据
             const mergedData = mergeCSVData(reportData, rulesData);
-  
+            
+            // 检查是否有错误
+            if (mergedData.error) {
+                return corsResponse({
+                    success: false,
+                    error: mergedData.error,
+                    details: {
+                        missingColumn: mergedData.missingColumn,
+                        fileType: mergedData.fileType
+                    }
+                }, 400, origin, {
+                    'Content-Type': 'application/json'
+                });
+            }
+            
             // 返回结果
-            return corsResponse(mergedData, 200, origin, {
+            return corsResponse({
+                success: true,
+                ...mergedData
+            }, 200, origin, {
                 'Content-Type': 'application/json'
             }, reportFileName);
         }
@@ -62,7 +79,12 @@ async function handleRequest(request, env) {
         return corsResponse('Send CSV files via POST request.', 200, origin);
     } catch (error) {
         console.error('Error processing request:', error);
-        return corsResponse('Internal Server Error: ' + error.message, 500, origin);
+        return corsResponse({
+            success: false,
+            error: 'Internal Server Error: ' + error.message
+        }, 500, origin, {
+            'Content-Type': 'application/json'
+        });
     }
 }
   
@@ -119,9 +141,37 @@ function parseCSV(csvString) {
 }
   
 function mergeCSVData(reportData, rulesData) {
+    // 验证数据格式
+    if (!reportData || !reportData.length || !reportData[0]) {
+        return { error: "Invalid report CSV format. The file appears to be empty or malformed." };
+    }
+    
+    if (!rulesData || !rulesData.length || !rulesData[0]) {
+        return { error: "Invalid rules CSV format. The file appears to be empty or malformed." };
+    }
+    
     const reportHeader = reportData[0];
     const rulesHeader = rulesData[0];
-  
+    
+    // 检查必要的列是否存在
+    const ruleHrefIndex = reportHeader.indexOf('Rule HREF');
+    if (ruleHrefIndex === -1) {
+        return { 
+            error: "Required column 'Rule HREF' is missing in the report CSV file. Please ensure your report contains this column.",
+            missingColumn: "Rule HREF",
+            fileType: "report"
+        };
+    }
+    
+    const ruleHrefRulesIndex = rulesHeader.indexOf('rule_href');
+    if (ruleHrefRulesIndex === -1) {
+        return { 
+            error: "Required column 'rule_href' is missing in the rules CSV file. Please ensure your rules export contains this column.",
+            missingColumn: "rule_href",
+            fileType: "rules"
+        };
+    }
+    
     // 需要移除的列
     const excludeColumns = ['ruleset_name', 'ruleset_href', 'rule_href'];
     const excludeIndexes = excludeColumns.map(col => rulesHeader.indexOf(col)).filter(idx => idx !== -1);
@@ -130,16 +180,28 @@ function mergeCSVData(reportData, rulesData) {
     const mergedHeader = reportHeader.concat(filteredRulesHeader);
     const mergedData = [mergedHeader];
 
-    // 创建一个规则 Map，按忽略第四部分的格式存储
-    const rulesMap = new Map(
-        rulesData.slice(1).map(row => [
-            normalizeHref(row[rulesHeader.indexOf('rule_href')]), // 使用标准化后的 href
-            row.filter((_, idx) => !excludeIndexes.includes(idx)) // 过滤不需要的列
-        ])
-    );
+    // 创建规则Map
+    const rulesMap = new Map();
+    
+    if (ruleHrefRulesIndex !== -1) {
+        rulesData.slice(1).forEach(row => {
+            if (row && row[ruleHrefRulesIndex]) {
+                const normalizedHref = normalizeHref(row[ruleHrefRulesIndex]);
+                rulesMap.set(normalizedHref, row.filter((_, idx) => !excludeIndexes.includes(idx)));
+            }
+        });
+    }
   
+    // 处理报告数据
     for (const reportRow of reportData.slice(1)) {
-        const normalizedHref = normalizeHref(reportRow[reportHeader.indexOf('Rule HREF')]); // 标准化 Rule HREF
+        // 如果Rule HREF列不存在或该行没有值，则添加空匹配
+        if (ruleHrefIndex === -1 || !reportRow[ruleHrefIndex]) {
+            mergedData.push(reportRow.concat(Array(filteredRulesHeader.length).fill('')));
+            continue;
+        }
+        
+        // 正常处理有Rule HREF的情况
+        const normalizedHref = normalizeHref(reportRow[ruleHrefIndex]);
         const ruleMatch = rulesMap.get(normalizedHref) || [];
         mergedData.push(reportRow.concat(ruleMatch));
     }
@@ -204,6 +266,8 @@ function mergeCSVData(reportData, rulesData) {
 }
   
 function normalizeHref(href) {
+    if (!href || typeof href !== 'string') return '';
+    
     // 提取从 "rule_sets" 开始的部分，忽略第四部分
     const parts = href.split('/');
     const ruleSetsIndex = parts.indexOf('rule_sets');
